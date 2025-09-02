@@ -9,3 +9,7 @@
 5.运行的时候把PPO.py复制替换掉 SB3下的ppo.py，可以选择是否冻住Actor网络
 
 6.运行的时候把on_policy_algorithm.py复制替换掉 SB3下的on_policy_algorithm.py，可以选择是否解冻Actor网络
+
+7.模仿学习代码？
+
+8.pip list?
