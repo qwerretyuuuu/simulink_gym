@@ -188,7 +188,7 @@ class SimulinkEnv(gym.Env):
     def receive_current_data(self):
         recv_data = self.recv_socket.receive()
         return recv_data
-
+'''
     def sim_step(self, action):
         """
         与 Simulink 模型通信，执行一步仿真
@@ -238,6 +238,66 @@ class SimulinkEnv(gym.Env):
             self.truncated = True
 
         return self.state, self.simulation_time, self.truncated, self.terminated,self.target_yaw
+'''
+
+    def sim_step(self, action):
+        """
+        与 Simulink 模型通信，执行一步仿真
+
+        参数:
+            action: 要执行的动作，必须符合动作空间
+
+        返回:
+            state: 当前环境状态（观测空间格式）
+            simulation_time: 当前仿真时间（秒）
+            truncated: 是否被截断（非终止的强制结束）
+            terminated: 是否达到终止状态
+        """
+        # 【1】检查仿真线程是否存活
+        if not self.model_debug and not self.simulation_thread.is_alive():
+            # 如果仿真线程意外死亡，也算作结束
+            logger.warn("仿真线程已不存在，判定为回合结束。")
+            self.truncated = True
+            # 返回上一个有效状态，防止后续代码出错
+            return self.state, self.simulation_time, self.truncated, self.terminated, self.target_yaw
+
+        # 【2】验证和发送动作
+        # 验证动作是否有效
+        if not self.action_space.contains(action):
+            raise ValueError(f"动作 {action} 不在动作空间内。")
+        # 发送动作给 Simulink
+        self.send_data(np.array(action))
+
+        # 【3】接收 Simulink 返回的数据
+        recv_data = self.recv_socket.receive()
+
+        # 【4】【核心修改点】处理仿真正常结束的情况
+        if not recv_data: # not recv_data 能同时处理 None 和空列表 []
+            logger.info("从 Simulink 接收到空消息，判定为仿真正常结束。")
+            self.truncated = True 
+            
+            # 当仿真结束后，没有新的状态信息。
+            # 返回上一个有效的状态 self.state，并将 is_truncated 设为 True，
+            # 这样调用者 (step 函数) 就能知道发生了什么。
+            return self.state, self.simulation_time, self.truncated, self.terminated, self.target_yaw
+
+        # 【5】处理数据长度异常的情况
+        if len(recv_data) != 11:
+            # 这种情况现在只会在接收到“非空但长度不对”的异常数据时触发
+            # 这是一个真正的错误，所以我们仍然抛出异常
+            raise ValueError(f"接收到的数据维度无效！实际维度 {len(recv_data)}，应为 11(state + target_yaw + time)")
+
+        # 【6】如果数据有效，正常处理
+        self.state = np.array(recv_data[0:-2], ndmin=1, dtype=np.float32)
+        self.simulation_time = recv_data[-1]
+        self.target_yaw = recv_data[-2]
+        
+        # 正常情况下，truncated 和 terminated 标志由模型内部逻辑决定（如果适用）
+        # 这里我们假设它们是 false，除非模型内部有特殊逻辑
+        # self.terminated = ... (这里可以根据 self.state 判断是否达到目标状态)
+
+        return self.state, self.simulation_time, self.truncated, self.terminated, self.target_yaw
+
 
     def step(self, action):
         """
